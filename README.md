@@ -2,7 +2,7 @@
 
 this is a demo for RAFT, which uses golang to implement a simple RAFT protocal.
 
-**this implementation is refering to ETCD/raft**
+**this implementation is refering to [ETCD/raft](https://github.com/etcd-io/etcd/tree/master/raft)**
 
 run main.go for test
 
