@@ -1,0 +1,1 @@
+protoc --experimental_allow_proto3_optional -I . --go_out=plugins=grpc:.  ./*.proto

@@ -1,0 +1,71 @@
+syntax = "proto2";
+package pb;
+//option go_package = ".;pb";
+
+//import "gogoproto/gogo.proto";
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+//import "github.com/gogo/protobuf/blob/master/gogoproto/gogo.proto";
+//import "gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_getters_all) = false;
+option (gogoproto.goproto_enum_prefix_all) = false;
+
+
+enum MessageType {
+    HeartbeatRequest        = 0;
+    HeartbeatResponse       = 1;
+    RequestVoteRequest      = 2;
+    RequestVoteResponse     = 3;
+    StartCampaign           = 4;
+    AppendEntriesRequest    = 5;
+    AppendEntriesResponse   = 6;
+    SendHeartbeat           = 7;
+    ProposeMessage          = 8;
+}
+
+enum RejectType {
+    RejectPastTerm      = 0;
+    RejectPastIndex     = 1;
+    RejectPastLogTerm   = 2;
+    RejectHasLeader     = 3;
+    RejectAppend        = 4;
+    RejectVoted         = 5;
+    RejectUnknown       = 6;
+}
+
+enum EntryType {
+    NormalEntry      = 0;
+    UnknownEntry     = 1;
+}
+
+message Entry {
+    optional EntryType  type    = 1 [(gogoproto.nullable) = false];
+    optional uint64     term    = 2 [(gogoproto.nullable) = false];
+    optional uint64     index   = 3 [(gogoproto.nullable) = false];
+    optional bytes      data    = 4;
+}
+
+message Milestone {
+    optional uint64     term    = 1 [(gogoproto.nullable) = false];
+    optional uint64     vote    = 2 [(gogoproto.nullable) = false];
+    optional uint64     commit  = 3 [(gogoproto.nullable) = false];
+}
+
+message Message {
+    optional MessageType    type    = 1 [(gogoproto.nullable) = false];
+    optional uint64         term    = 2 [(gogoproto.nullable) = false];
+    optional uint64         src     = 3 [(gogoproto.nullable) = false];
+    optional uint64         dst     = 4 [(gogoproto.nullable) = false];
+    optional bool           reject  = 5 [(gogoproto.nullable) = false];
+    optional uint64         index   = 6 [(gogoproto.nullable) = false];
+    optional uint64         commit  = 7 [(gogoproto.nullable) = false];
+    optional uint64         logTerm = 8 [(gogoproto.nullable) = false];
+    optional RejectType     rejectType = 9 [(gogoproto.nullable) = false];
+    optional uint64         rejectHint = 10 [(gogoproto.nullable) = false];
+    optional bytes          extra   = 11;
+    repeated Entry          entries = 12 [(gogoproto.nullable) = false];
+    // sanpshot
+}
