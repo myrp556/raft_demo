@@ -153,8 +153,17 @@ func (node *Node) randomElectionTimeout() {
 func (node *Node) StartNode() {
     node.becomeFollower(0, 0)
 
-    node.INFO("start node")
+    node.DEBUG("start node")
     go node.run()
+}
+
+func (node *Node) StopNode() {
+    select {
+    case node.stopChannel <- struct{} {}:
+    case <-node.doneChannel:
+        return
+    }
+    <-node.doneChannel
 }
 
 func (node *Node) Tick() {
@@ -308,10 +317,10 @@ func (node *Node) run() {
             forwardInterface = nil
 
         case <- node.stopChannel:
-            break
+            close(node.doneChannel)
+            return
         }
     }
-    node.INFO("exit run")
 }
 
 func (node *Node) processAppendEntries(message pb.Message) {

@@ -61,21 +61,21 @@ func (node *Node) processVoteRequest(message pb.Message) {
             node.electionElapse = 0
             node.voteTo = srcID
         } else {
-            message.Reject = true
+            response.Reject = true
             if t == 1 {
-                message.RejectType = pb.RejectPastLogTerm
+                response.RejectType = pb.RejectPastLogTerm
             } else {
-                message.RejectType = pb.RejectPastIndex
+                response.RejectType = pb.RejectPastIndex
             }
             node.INFO("can not vote to node %d for OUT OF DATE(%v) index=%d term=%d",  srcID, message.RejectType, message.Index, message.Term)
         }
     } else {
-        message.Reject = true
-        message.RejectType = pb.RejectHasLeader
+        response.Reject = true
+        response.RejectType = pb.RejectHasLeader
         if (node.Leader!=0) {
             node.INFO("can not vote to node %d for has leader node %d", srcID, node.Leader)
         } else {
-            message.RejectType = pb.RejectVoted
+            response.RejectType = pb.RejectVoted
             node.INFO("can not vote to node %d for voted to node %d", srcID, node.voteTo)
         }
     }
