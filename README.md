@@ -13,7 +13,7 @@ go run main.go
 
 ### some explain to code
 
-`./main.go` main function to execute our code and run for test
+`./main.go` main function to execute our code and run for dmeo
 
 `./raft/node.go` mainly implenments RAFT protocal, all functional calls are started from here
 
@@ -28,6 +28,10 @@ go run main.go
 `./raft/logger.go` a simple log output
 
 `./raft/db.go` simple **RocksDB** KV operation support
+
+`./test` this is a test program, you can run this file for testing
+
+`./raft/test.go` including some unit test for our implementation
 
 
 to make proto use `protoc -I=${GOPATH}/src -I=$GOPATH/src/github.com/gogo/protobuf/gogoproto -I=raft/pb/. --gogo_out=raft/pb/. raft/pb/*.proto`
