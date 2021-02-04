@@ -5,9 +5,6 @@ import (
     "github.com/myrp556/raft_demo/raft/pb"
 )
 
-type CampignBoard struct {
-}
-
 func (node *Node) campaign() {
     if node.Type == Leader {
         node.INFO("already been a leader, no campaign start")

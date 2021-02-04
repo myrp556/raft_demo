@@ -103,7 +103,7 @@ var NodeTypeName []string = []string {
 }
 
 func CreateNode(ID uint64, peers []Peer) (*Node, error) {
-    Info.Println(fmt.Sprintf("Create node for ID: %d", ID))
+    //Info.Println(fmt.Sprintf("Create node for ID: %d", ID))
     node := &Node {
         ID: ID,
         Type: Unknown,

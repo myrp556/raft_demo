@@ -17,11 +17,17 @@ func test(title string, testFunc func() bool) {
 }
 
 func main() {
+    raft.OpenLog = false
+    raft.OpenDebug = false
+
     //test("node tick", raft.TestNodeTick)
     //test("node campaign", raft.TestNodeCampaign)
     //test("node vote", raft.TestNodeVote)
     //test("node voted", raft.TestNodeVoted)
     //test("node propose", raft.TestNodePropose)
     //test("node append entry", raft.TestAppendEntry)
-    test("node progress", raft.TestNodeProgress)
+    //test("node append entry reject", raft.TestAppendReceiveReject)
+    //test("node progress", raft.TestNodeProgress)
+    //test("node append receive", raft.TestNodeAppendReceive)
+    test("node append reject", raft.TestNodeAppendReject)
 }

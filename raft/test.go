@@ -21,6 +21,8 @@ func newTestNode(numNode int) *Node {
         peers = append(peers, Peer{ID: uint64(i+1)})
     }
     node, _ := CreateNode(1, peers)
+    //node.OpenLog = false
+    //node.OpenDebug = false
     return node
 }
 
@@ -233,6 +235,86 @@ func TestNodeProgress() bool {
             ERROR("commit in boardcast error: commit=%d", message.Commit)
             return false
         }
+    }
+
+    return true
+}
+
+func TestNodeAppendReceive() bool {
+    node := newTestNode(3)
+    node.becomeFollower(1, 2)
+    node.nodeProgress[1] = &Progress {NextIndex: 2, MarchIndex: 1, Live: true}
+    node.nodeProgress[2] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
+    node.nodeProgress[3] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
+    node.logManager.cacheEntries = []pb.Entry {{Index: 1, Term: 1}}
+
+    message := pb.Message{Src: 2, Dst: 1, Type: pb.AppendEntriesRequest, Index: 1, LogTerm: 1, Term: 1, Entries: []pb.Entry{{Index: 2, Term: 1}}, Commit: 1}
+    node.processMessage(message)
+    if len(node.logManager.cacheEntries) != 2 {
+        ERROR("receive append entry error: %s", getEntriesIndexStr(node.logManager.cacheEntries))
+        return false
+    }
+    if node.logManager.committed != 1 {
+        ERROR("node receive and commit error: %d", node.logManager.committed)
+        return false
+    }
+
+    return true
+}
+
+func TestAppendReceiveReject() bool {
+    node := newTestNode(3)
+    node.becomeFollower(1, 2)
+    node.nodeProgress[1] = &Progress {NextIndex: 2, MarchIndex: 1, Live: true}
+    node.nodeProgress[2] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
+    node.nodeProgress[3] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
+    node.logManager.cacheEntries = []pb.Entry {{Index: 1, Term: 1}}
+    node.Term = 2
+    node.logManager.committed = 1
+
+    message := pb.Message{Src: 2, Dst: 1, Type: pb.AppendEntriesRequest, Index: 2, Term: 2, Commit: 1, Entries: []pb.Entry{{Index: 3, Term: 3}}}
+    node.processMessage(message)
+    
+    if len(node.messagesToSend) != 1 {
+        ERROR("no response to send: %d", len(node.messagesToSend))
+        return false
+    }
+    response := node.messagesToSend[0]
+    if response.Type != pb.AppendEntriesResponse {
+        ERROR("response type error: %v", response.Type)
+        return false
+    }
+    if !response.Reject || response.RejectType!=pb.RejectAppend || response.RejectHint!=1 {
+        ERROR("response reject error: reject=%v type=%v hint=%d", response.Reject, response.RejectType, response.RejectHint)
+        return false
+    }
+    return true
+}
+
+func TestNodeAppendReject() bool {
+    node := newTestNode(3)
+    node.becomeLeader()
+    node.Term = 1
+    node.nodeProgress[1] = &Progress {NextIndex: 3, MarchIndex: 2, Live: true}
+    node.nodeProgress[2] = &Progress {NextIndex: 2, MarchIndex: 1, Live: true}
+    node.nodeProgress[3] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
+    node.logManager.cacheEntries = []pb.Entry {{Index: 1, Term: 1}, {Index: 2, Term: 1}}
+
+    message := pb.Message{Src: 2, Dst: 1, Type: pb.AppendEntriesResponse, Term: 1, Index: 1, Reject: true, RejectHint: 2}
+    node.processMessage(message)
+
+    if len(node.messagesToSend) != 1 {
+        ERROR("no retry message: %d", len(node.messagesToSend))
+        return false
+    }
+    response := node.messagesToSend[0]
+    if response.Type != pb.AppendEntriesRequest {
+        ERROR("no append entry request send: %v", response.Type)
+        return false
+    }
+    if response.Index!=0 || response.LogTerm!=0 {
+        ERROR("retry message error: index=%d logTerm=%d", response.Index, response.LogTerm)
+        return false
     }
 
     return true
