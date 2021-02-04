@@ -113,3 +113,127 @@ func TestNodeVoted() bool {
         return false
     }
 }
+
+func TestNodePropose() bool {
+    node := newTestNode(3)
+    node.becomeLeader()
+    node.Term = 1
+
+    message := pb.Message{Src:1, Dst:1, Type: pb.ProposeMessage, Term: 1, Entries: []pb.Entry{{Data: []byte("data")}}}
+    err := node.processMessage(message)
+    if err != nil {
+        ERROR("process Propose message err: $v", err)
+        return false
+    }
+
+    if node.logManager.lastIndex() != 1 {
+        ERROR("append entry error last index: %d", node.logManager.lastIndex())
+        return false
+    }
+    if len(node.messagesToSend) != 2 {
+        ERROR("no message to boardcast len=%d", len(node.messagesToSend))
+        return false
+    }
+
+    for _, appendMessage := range node.messagesToSend {
+        if appendMessage.Type != pb.AppendEntriesRequest {
+            ERROR("append entry request type error: %v", appendMessage.Type)
+            return false
+        }
+        if len(appendMessage.Entries) != 1 {
+            ERROR("append entry request entry len error: %d", len(appendMessage.Entries))
+            return false
+        }
+    }
+    return true
+}
+
+func TestAppendEntry() bool {
+    node := newTestNode(3)
+    node.becomeLeader()
+    node.Term = 3
+    node.logManager.cacheEntries = []pb.Entry{{Index: 1, Term: 1}, {Index: 2, Term: 2}}
+    node.nodeProgress[1].NextIndex = 3
+    node.nodeProgress[1].MarchIndex = 2
+
+    entries := []pb.Entry{{Index: 2, Term: 2}, {Index: 3, Term: 3}}
+    node.logManager.appendEntriesToCache(entries)
+    if len(node.logManager.cacheEntries)!=3 {
+        ERROR("append entries to cache error, len=%d", len(node.logManager.cacheEntries))
+        return false
+    }
+    if node.logManager.cacheEntries[0].Index!=1 || node.logManager.cacheEntries[1].Index!=2 || node.logManager.cacheEntries[2].Index!=3 {
+        ERROR("append entries to cache error, index=%s", getEntriesIndexStr(node.logManager.cacheEntries))
+        return false
+    }
+
+    entries1 := []pb.Entry{{Index: 3, Term: 3}, {Index: 4, Term: 4}}
+    node.logManager.appendEntries(2, 2, 0, entries1...)
+    if len(node.logManager.cacheEntries)!=4 {
+        ERROR("append entries error, len=%d, %s", len(node.logManager.cacheEntries), getEntriesIndexStr(node.logManager.cacheEntries))
+        return false
+    }
+
+    entries2 := []pb.Entry{{Index: 6, Term: 6}}
+    node.logManager.appendEntries(5, 5, 0, entries2...)
+    if len(node.logManager.cacheEntries)!=4 {
+        ERROR("append no-exist entries error, len=%d, %s", len(node.logManager.cacheEntries), getEntriesIndexStr(node.logManager.cacheEntries))
+        return false
+    }
+
+    node.logManager.offset = 2
+    node.logManager.cacheEntries = node.logManager.cacheEntries[1:]
+    entries3 := []pb.Entry{{Index: 1, Term: 1}, {Index: 2, Term: 2}}
+    node.logManager.appendEntriesToCache(entries3)
+    if len(node.logManager.cacheEntries)!=2 {
+        ERROR("append offset cache entries error, len=%d, %s", len(node.logManager.cacheEntries), getEntriesIndexStr(node.logManager.cacheEntries))
+        return false
+    }
+
+    entries4 := []pb.Entry{{Index: 2, Term: 3}}
+    node.logManager.appendEntriesToCache(entries4)
+    if node.logManager.cacheEntries[1].Term!=3 {
+        ERROR("append truncate cache entries error, len=%d, %s", len(node.logManager.cacheEntries), getEntriesIndexStr(node.logManager.cacheEntries))
+        return false
+    }
+
+    return true
+}
+
+func TestNodeProgress() bool {
+    node := newTestNode(3)
+    node.becomeLeader()
+    node.Term = 2
+    node.nodeProgress[1] = &Progress {NextIndex: 4, MarchIndex: 3, Live: true}
+    node.nodeProgress[2] = &Progress {NextIndex: 2, MarchIndex: 1, Live: true}
+    node.nodeProgress[3] = &Progress {NextIndex: 3, MarchIndex: 2, Live: true}
+    node.logManager.cacheEntries = []pb.Entry{{Index: 1, Term: 1}, {Index: 2, Term: 1}, {Index: 3, Term: 1}}
+    node.logManager.committed = 1
+
+    message1 := pb.Message{Src: 2, Dst: 1, Type: pb.AppendEntriesResponse, Term: 2, Reject: false, Index: 2}
+    message2 := pb.Message{Src: 3, Dst: 1, Type: pb.AppendEntriesResponse, Term: 2, Reject: false, Index: 3}
+
+    node.processMessage(message1)
+    node.processMessage(message2)
+    if node.nodeProgress[2].NextIndex!=3 || node.nodeProgress[3].NextIndex!=4 {
+        ERROR("update node progress error: node 2 next=%d, node 3 next=%d",
+            node.nodeProgress[2].NextIndex, node.nodeProgress[3].NextIndex)
+        return false
+    }
+    if node.logManager.committed != 2 {
+        ERROR("commit error: committed=%d", node.logManager.committed)
+        return false
+    }
+    if len(node.messagesToSend) != 2 {
+        ERROR("no boardcast append: %d", len(node.messagesToSend))
+        return false
+    }
+    for _, message := range node.messagesToSend {
+        if message.Commit != 2 {
+            ERROR("commit in boardcast error: commit=%d", message.Commit)
+            return false
+        }
+    }
+
+    return true
+}

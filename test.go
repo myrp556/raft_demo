@@ -20,5 +20,8 @@ func main() {
     //test("node tick", raft.TestNodeTick)
     //test("node campaign", raft.TestNodeCampaign)
     //test("node vote", raft.TestNodeVote)
-    test("node voted", raft.TestNodeVoted)
+    //test("node voted", raft.TestNodeVoted)
+    //test("node propose", raft.TestNodePropose)
+    //test("node append entry", raft.TestAppendEntry)
+    test("node progress", raft.TestNodeProgress)
 }

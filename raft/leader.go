@@ -140,6 +140,7 @@ func (node *Node) commitEntries() bool {
     index := node.getLowMarch()
     if node.logManager.commitTo(index) {
         node.INFO("commit to %d", index)
+        return true
     }
     return false
 }
