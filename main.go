@@ -31,13 +31,30 @@ type Data struct {
     content string
 }
 
+type Node struct {
+    ID uint64
+    node *raft.Node
+    storage *raft.MemoryStorage
+    db *raft.RocksDb
+    alive bool
+}
+
 var dataMap map[int]Data = map[int]Data {
+    1: {src: 2, content: "c"},
     22: {src: 1, content: "a=4",},
     25: {src: 2, content: "b=5",},
     27: {src: 3, content: "a=1",},
     29: {src: 3, content: "c=3",},
     30: {src: 2, content: "b=2",},
     32: {src: 2, content: "c=9",},
+    35: {src: 2, content: "x",},
+    37: {src: 1, content: "a=2"},
+    40: {src: 3, content: "c=1"},
+    42: {src: 3, content: "b=3"},
+    100: {src: 2, content: "v"},
+    101: {src: 2, content: "t"},
+    110: {src: 3, content: "a=10"},
+    120: {src: 1, content: "c=22"},
 }
 
 func callDb(ID uint64, db *raft.RocksDb, cmd string) {
@@ -54,16 +71,36 @@ func checkDb(ID uint64, db *raft.RocksDb) {
     log.Println(fmt.Sprintf("node %d check, a=%v b=%v c=%v", ID, db.GetStr("a"), db.GetStr("b"), db.GetStr("c")))
 }
 
-func touchData(ID uint64, count int, node *raft.Node) {
+func reportLog(ID uint64, node *raft.Node) {
+    log.Println(fmt.Sprintf("node %d log, %s", ID, node.ReportLog()))
+}
+
+func touchData(node *Node, count int) {
     if data, ok:=dataMap[count]; ok {
-        if data.src == ID {
-            node.ProposeMessage([]byte(data.content))
+        if data.src == node.ID {
+            switch data.content {
+            case "x":
+                node.alive = false
+                log.Println(fmt.Sprintf("node %d down", node.ID))
+            case "v":
+                node.alive = true
+                log.Println(fmt.Sprintf("node %d up", node.ID))
+            case "c":
+                node.node.OpenElection = false
+                log.Println(fmt.Sprintf("node %d close election", node.ID))
+            case "t":
+                node.node.OpenElection = true
+                log.Println(fmt.Sprintf("node %d open election", node.ID))
+            default:
+                node.node.ProposeMessage([]byte(data.content))
+            }
         }
     }
 }
 
-func runNode(ID uint64, node *raft.Node, db *raft.RocksDb) {
-    node.StartNode()
+//func runNode(ID uint64, node *raft.Node, db *raft.RocksDb) {
+func runNode(node *Node) {
+    node.node.StartNode()
 
     ticker := time.NewTicker(tickInterval)
     tickCount := 0
@@ -72,30 +109,37 @@ func runNode(ID uint64, node *raft.Node, db *raft.RocksDb) {
     for {
         select {
         case <-ticker.C:
-            node.Tick()
+            node.node.Tick()
             tickCount++
-            touchData(ID, tickCount, node)
+            //touchData(node.ID, tickCount, node.node)
+            touchData(node, tickCount)
 
-        case box := <-node.GetPullChannel():
+        case box := <-node.node.GetPullChannel():
             //log.Println(fmt.Sprintf("node %d get pull data", ID))
-            go sendMessages(ID, box.Messages)
             // storange
+            node.storage.Append(box.CacheEntries)
+            // execute
             for _, entry := range box.CommittedEntries {
                 execCmd := string(entry.Data)
-                log.Println(fmt.Sprintf("node %d exec index=%d [%s]", ID, entry.Index, execCmd))
-                if db != nil {
-                    callDb(ID, db, execCmd)
+                log.Println(fmt.Sprintf("node %d exec index=%d [%s]", node.ID, entry.Index, execCmd))
+                if node.db != nil {
+                    callDb(node.ID, node.db, execCmd)
                 }
             }
+            if node.alive {
+                go sendMessages(node.ID, box.Messages)
+            }
 
-            node.Forward()
+            node.node.Forward()
 
-        case message := <-chans[ID-1]:
-            if message.Dst != ID {
-                log.Println(fmt.Sprintf("node %d can not receive message to node %d", ID, message.Dst))
+        case message := <-chans[node.ID-1]:
+            if message.Dst != node.ID {
+                log.Println(fmt.Sprintf("node %d can not receive message to node %d", node.ID, message.Dst))
             } else {
                 //log.Println(fmt.Sprintf("node %d receive message from node %d, type %v", ID, message.Src, message.Type))
-                node.ReceiveMessage(message)
+                if node.alive {
+                    node.node.ReceiveMessage(message)
+                }
             }
 
         case <-done:
@@ -118,20 +162,27 @@ func sendMessages(ID uint64, messages []pb.Message) {
 }
 
 func start(ID uint64, peers []raft.Peer) (*raft.Node, *raft.RocksDb) {
-    node, _ := raft.CreateNode(ID, peers)
-    db := &raft.RocksDb{Name: fmt.Sprintf("node%d", ID)}
-    if db.Init() {
+    storage := raft.NewMemoryStorage()
+    node := &Node {
+        ID: ID,
+        storage: storage,
+        node: raft.CreateNode(ID, storage, peers),
+        db: &raft.RocksDb{Name: fmt.Sprintf("node%d", ID)},
+        alive: true,
+    }
+
+    if node.db.Init() {
         fmt.Println("db set up")
     } else {
         fmt.Println("db failed")
-        db = nil
+        node.db = nil
     }
-    db.Delete("a")
-    db.Delete("b")
-    db.Delete("c")
+    node.db.Delete("a")
+    node.db.Delete("b")
+    node.db.Delete("c")
 
-    go runNode(ID, node, db)
-    return node, db
+    go runNode(node)
+    return node.node, node.db
 }
 
 func main() {
@@ -139,13 +190,16 @@ func main() {
     //config, _ := raft.GetDefaultConfig()
     peers := []raft.Peer{{ID: 1}, {ID: 2}, {ID: 3}}
 
-    _, db1 := start(1, peers)
-    _, db2 := start(2, peers)
-    _, db3 := start(3, peers)
+    node1, db1 := start(1, peers)
+    node2, db2 := start(2, peers)
+    node3, db3 := start(3, peers)
 
-    time.Sleep(8 * time.Second)
+    time.Sleep(20 * time.Second)
     done <- true
+    reportLog(1, node1)
     checkDb(1, db1)
+    reportLog(2, node2)
     checkDb(2, db2)
+    reportLog(3, node3)
     checkDb(3, db3)
 }

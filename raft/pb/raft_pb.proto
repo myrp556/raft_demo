@@ -19,11 +19,13 @@ enum MessageType {
     HeartbeatResponse       = 1;
     RequestVoteRequest      = 2;
     RequestVoteResponse     = 3;
-    StartCampaign           = 4;
-    AppendEntriesRequest    = 5;
-    AppendEntriesResponse   = 6;
-    SendHeartbeat           = 7;
-    ProposeMessage          = 8;
+    RequestPreVoteRequest   = 4;
+    RequestPreVoteResponse  = 5;
+    StartCampaign           = 6;
+    AppendEntriesRequest    = 7;
+    AppendEntriesResponse   = 8;
+    SendHeartbeat           = 9;
+    ProposeMessage          = 10;
 }
 
 enum RejectType {
@@ -52,6 +54,12 @@ message Milestone {
     optional uint64     term    = 1 [(gogoproto.nullable) = false];
     optional uint64     vote    = 2 [(gogoproto.nullable) = false];
     optional uint64     commit  = 3 [(gogoproto.nullable) = false];
+}
+
+message Snapshot {
+    optional uint64     index   = 1 [(gogoproto.nullable) = false];
+    optional uint64     term    = 2 [(gogoproto.nullable) = false];
+    optional uint64     data    = 3 [(gogoproto.nullable) = false];
 }
 
 message Message {

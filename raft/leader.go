@@ -125,7 +125,7 @@ func (node *Node) appendEntry(entries ...pb.Entry) bool {
     //lastestIndex, ok := node.logManager.appendEntries(entries...)
     lastestIndex, ok := node.logManager.appendEntriesToCache(entries)
     if ok {
-        node.DEBUG("append entries to cache success, index=%d, cache=[%s]", lastestIndex, getEntriesIndexStr(node.logManager.cacheEntries))
+        node.DEBUG("append entries to cache success, index=%d, cache=[%s]", lastestIndex, getEntriesIndexStr(node.logManager.cache.entries))
         // update progress
         node.updateProgress(node.ID, lastestIndex)
         node.commitEntries()

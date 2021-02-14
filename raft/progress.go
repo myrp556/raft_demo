@@ -1,5 +1,9 @@
 package raft
 
+import (
+    "sort"
+)
+
 type Progress struct {
     // mostly have Next = March+1
     // next for next entry's index begin with
@@ -46,17 +50,14 @@ func (node *Node) decreseProgress(ID uint64, rejectIndex uint64, hintIndex uint6
 // return the most lowe march index which
 // all nodes have
 func (node *Node) getLowMarch() uint64 {
-    low := uint64(0)
-    setted := false
+    lis := []int {}
     for _, progress := range node.nodeProgress {
-        if progress.Live && (!setted || progress.MarchIndex<low) {
-            low = progress.MarchIndex
-            setted = true
+        if progress.Live {
+            lis = append(lis, int(progress.MarchIndex))
         }
     }
+    sort.Ints(lis)
 
-    return low
+    return uint64(lis[int(len(lis)/2)])
 }
-
-
 

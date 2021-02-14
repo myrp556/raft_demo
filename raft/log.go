@@ -2,59 +2,64 @@ package raft
 
 import (
     //logger "log"
-    //"fmt"
+    "fmt"
     "github.com/myrp556/raft_demo/raft/pb"
 )
 
 // note: index form 1...
 type LogManager struct {
+    storage LogStorage
     // cache LogCache
-    cacheEntries []pb.Entry
+    cache LogCache
     // index of log which has been committed
     committed uint64
     // index of log which has been applied
     applied uint64
-    // cacheEntry[i] has index=offset+i
-    offset uint64
 }
 
-func CreateLog() *LogManager {
-    log := &LogManager {}
-    log.reset()
+func NewLogManager(storage LogStorage) *LogManager {
+    if storage == nil {
+        ERROR("no storage specificed!")
+        return nil
+    }
+    log := &LogManager {
+        storage: storage,
+    }
+    firstIndex, err := storage.FirstIndex()
+    if err != nil {
+        ERROR("%v", err)
+        return nil
+    }
+    lastIndex, err := storage.LastIndex()
+    if err != nil {
+        ERROR("%v", err)
+        return nil
+    }
+    log.cache.offset = lastIndex+1
+    log.committed = firstIndex-1
+    log.applied = firstIndex-1
 
     return log
 }
 
-func (log *LogManager) reset() {
-    log.cacheEntries = []pb.Entry {}
-    log.committed = 0
-    log.applied = 0
-    // offset+i == index (1, 2, 3...)
-    log.offset = 1
-}
-
-func (log *LogManager) indexToPos(index uint64) uint32 {
-    return uint32(index)-uint32(log.offset)
-}
-
-func (log *LogManager) posToIndex(pos uint32) uint64 {
-    return uint64(pos) + log.offset
-}
-
 func (log *LogManager) getTerm(index uint64) (uint64, bool) {
-    // special for 0 index, which could be use for none log exist
-    if index == 0 {
+    if index < log.firstIndex()-1 {
         return 0, true
     }
-    lastIdx := log.lastIndex()
-    if index > lastIdx {
+    if index > log.lastIndex() {
+        return 0, true
+    }
+
+    if term, ok:=log.cache.getTerm(index); ok {
+        return term, true
+    }
+
+    term, err := log.storage.GetTerm(index)
+    if err != nil {
+        ERROR("%v", err)
         return 0, false
     }
-    return log.cacheEntries[log.indexToPos(index)].Term, true
-}
-
-func (log *LogManager) empty() bool {
-    return len(log.cacheEntries) == 0
+    return term, true
 }
 
 func (log *LogManager) matchLog(index uint64, term uint64) bool {
@@ -78,29 +83,14 @@ func (log *LogManager) findConflict(entries []pb.Entry) uint64 {
 // append entries to cache
 func (log *LogManager) appendEntriesToCache(entries []pb.Entry) (uint64, bool) {
     if len(entries) == 0 {
-        return log.lastIndex(), false
+        return log.lastIndex(), true
     }
     if entries[0].Index <= log.committed {
-        return log.lastIndex(), false
+        ERROR("append enties out of range")
+        return 0, false
     }
 
-    index := entries[0].Index
-    switch {
-    case index == log.offset+uint64(len(log.cacheEntries)):
-        // new entries just next to existing cache entries
-        log.cacheEntries = append(log.cacheEntries, entries...)
-
-    case index <= log.offset:
-        // append entries behind offset, then reset offset
-        log.offset = index
-        log.cacheEntries = entries
-
-    default:
-        // cacheEntry[0:index-offset) is useful, reset of them dispatch
-        // then append new entries
-        log.cacheEntries = append(log.cacheEntries[:log.indexToPos(index)], entries...)
-    }
-    return log.lastIndex(), true
+    return log.cache.appendEntriesToCache(entries)
 }
 
 // append entires to log, return the last index after append and if success
@@ -127,7 +117,7 @@ func (log *LogManager) appendEntries(index uint64, term uint64, committed uint64
 }
 
 func (log *LogManager) commitTo(commit uint64) bool {
-    if (commit > log.committed) {
+    if commit>log.committed {
         log.committed = commit
         return true
     }
@@ -135,7 +125,7 @@ func (log *LogManager) commitTo(commit uint64) bool {
 }
 
 func (log *LogManager) appliedTo(apply uint64) bool {
-    if (apply>0 && apply>=log.committed && apply>log.applied) {
+    if apply>0 && apply>=log.committed && apply>log.applied {
         log.applied = apply
         return true
     }
@@ -145,24 +135,46 @@ func (log *LogManager) appliedTo(apply uint64) bool {
 // logs' index stop at idx are storaged,
 // so move cache and offset make start from idx+1
 func (log *LogManager) stableTo(index uint64, term uint64) bool {
-    t, ok := log.getTerm(index)
-    if ok && (t==term && index>=log.offset) {
-        // check
-        log.cacheEntries = log.cacheEntries[log.indexToPos(index)+1:]
-        log.offset = index+1
-        // TODO: shrinkEntries?
-        return true
-    }
-    return false
+    return log.cache.stableTo(index, term)
+}
+
+func (log *LogManager) stableSnapshotTo(index uint64) bool {
+    return log.cache.stableSnapshotTo(index)
 }
 
 func (log *LogManager) firstIndex() uint64 {
-    // TODO: add storage
-    return uint64(0)
+    if index, ok:=log.cache.firstIndex(); ok {
+        return index
+    }
+    index, err := log.storage.FirstIndex()
+    if err != nil {
+        ERROR("%v", err)
+        return 0
+    }
+    return index
 }
 
 func (log *LogManager) lastIndex() uint64 {
-    return log.offset+uint64(len(log.cacheEntries))-1
+    if index, ok:=log.cache.lastIndex(); ok {
+        return index
+    }
+    index, err := log.storage.LastIndex()
+    if err != nil {
+        ERROR("%v", err)
+        return 0
+    }
+    return index
+}
+
+func (log *LogManager) getSnapshot() (pb.Snapshot, error) {
+    if log.cache.snapshot != nil {
+        return *log.cache.snapshot, nil
+    }
+    return log.storage.GetSnapshot()
+}
+
+func (log *LogManager) hasPendingSnapshot() bool {
+    return log.cache.hasSnapshot()
 }
 
 func (log *LogManager) getEntriesFrom(leftIdx uint64) []pb.Entry {
@@ -173,9 +185,31 @@ func (log *LogManager) getEntriesFrom(leftIdx uint64) []pb.Entry {
 func (log *LogManager) getEntries(leftIdx uint64, rightIdx uint64) []pb.Entry {
     //logger.Printf(fmt.Sprintf("getEntries: [%d %d), lastIdx=%d, offset=%d", leftIdx, rightIdx, log.lastIndex(), log.offset))
     var entries []pb.Entry
-    if leftIdx>0 && rightIdx<=log.lastIndex()+1 && leftIdx < rightIdx {
-        entries = log.cacheEntries[log.indexToPos(leftIdx) : log.indexToPos(rightIdx)]
+    if leftIdx >= rightIdx {
+        return entries
     }
+
+    if leftIdx < log.cache.offset {
+        stableEntries, err := log.storage.GetEntries(leftIdx, min(rightIdx, log.cache.offset))
+        if err != nil {
+            ERROR("%v", err)
+            return entries
+        }
+        entries = stableEntries
+    }
+
+    if rightIdx > log.cache.offset {
+        cacheEntries := log.cache.getEntries(max(leftIdx, log.cache.offset), rightIdx)
+        if len(entries)>0 {
+            combine := make([]pb.Entry, len(entries)+len(cacheEntries))
+            n := copy(combine, entries)
+            copy(combine[n:], cacheEntries)
+            entries = combine
+        } else {
+            entries = cacheEntries
+        }
+    }
+
     return entries
 }
 
@@ -191,11 +225,11 @@ func (log *LogManager) hasApply() bool {
 }
 
 func (log *LogManager) entriesInCache() []pb.Entry {
-    return log.cacheEntries
+    return log.cache.entries
 }
 
 func (log *LogManager) hasCache() bool {
-    return len(log.cacheEntries) > 0
+    return len(log.cache.entries) > 0
 }
 
 func (log *LogManager) isUpToDate(index uint64, term uint64) (bool, int) {
@@ -218,6 +252,21 @@ func (log *LogManager) lastTerm() uint64 {
         return term
     }
     return 0
+}
+
+func (log *LogManager) restore(snapshot pb.Snapshot) {
+    log.committed = snapshot.Index
+    log.cache.restore(snapshot)
+}
+
+func IsEmptySnapshot(snapshot pb.Snapshot) bool {
+    return snapshot.Index == 0
+}
+
+func (node *Node) ReportLog() string {
+    str := getEntriesIndexStr(node.logManager.getEntries(node.logManager.firstIndex(), node.logManager.lastIndex()+1))
+    str = str + fmt.Sprintf(" com=%d off=%d", node.logManager.committed, node.logManager.cache.offset)
+    return str
 }
 
 func max(a uint64, b uint64) uint64 {

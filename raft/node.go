@@ -15,6 +15,8 @@ type Box struct {
     CacheEntries []pb.Entry
     // for execution
     CommittedEntries []pb.Entry
+    // snapshot
+    Snapshot pb.Snapshot
 }
 
 var OpenLog bool = true
@@ -78,6 +80,8 @@ type Node struct {
     stopChannel chan struct{}
     doneChannel chan struct{}
 
+    OpenElection bool
+
     messagesToSend []pb.Message
 }
 
@@ -88,21 +92,25 @@ type Peer struct {
 
 type NodeType uint32
 
+var preVote bool = true
+
 const (
     Follower    NodeType = 0
     Candidate   NodeType = 1
-    Leader      NodeType = 2
-    Unknown     NodeType = 3
+    PreCandidate NodeType = 2
+    Leader      NodeType = 3
+    Unknown     NodeType = 4
 )
 
 var NodeTypeName []string = []string {
     "Follower",
     "Candidate",
+    "PreCandidate",
     "Leader",
     "Unknown",
 }
 
-func CreateNode(ID uint64, peers []Peer) (*Node, error) {
+func CreateNode(ID uint64, storage LogStorage, peers []Peer) *Node {
     //Info.Println(fmt.Sprintf("Create node for ID: %d", ID))
     node := &Node {
         ID: ID,
@@ -111,7 +119,7 @@ func CreateNode(ID uint64, peers []Peer) (*Node, error) {
         Leader: 0,
         nodeLive: 0,
         nodeProgress: make(map[uint64] *Progress),
-        logManager: CreateLog(),
+        logManager: NewLogManager(storage),
 
         electionTimeout: 10,
         heartbeatTimeout: 2,
@@ -127,10 +135,11 @@ func CreateNode(ID uint64, peers []Peer) (*Node, error) {
         proposeMessageChannel: make(chan MessageWithResult),
         stopChannel: make(chan struct{}),
         doneChannel: make(chan struct{}),
+        OpenElection: true,
     }
     node.initProgress(peers)
 
-    return node, nil
+    return node
 }
 
 func (node *Node) resetNode(term uint64) {
@@ -181,7 +190,6 @@ func (node *Node) tickElection() {
         node.electionElapse = 0
         node.DEBUG("Election timeout!")
         message := pb.Message{Type: pb.StartCampaign, Term: node.Term}
-        //node.ReceiveMessage(message)
         node.processMessage(message)
     }
 }
@@ -205,12 +213,16 @@ func (node *Node) forwardProcess(box Box) {
     //appliedIndex, appliedTerm := box.getAppliedEndIndexTerm()
     appliedIndex, _ := box.getAppliedEndIndexTerm()
     storageIndex, storageTerm := box.getStoragedEndIndexTerm()
+
     if appliedIndex>0 {
         node.INFO("node applied to %d", appliedIndex)
         node.logManager.appliedTo(appliedIndex)
     }
     if storageIndex>0 && storageTerm>0{
-        //node.logManager.stableTo(sotrageIndex, storageTerm)
+        node.logManager.stableTo(storageIndex, storageTerm)
+    }
+    if !IsEmptySnapshot(box.Snapshot) {
+        node.logManager.stableSnapshotTo(box.Snapshot.Index)
     }
 }
 
@@ -229,20 +241,35 @@ func (node *Node) processMessage(message pb.Message) error {
     }
 
     if srcTerm > node.Term {
-        node.INFO("receive message from node %d in HIGH term %d(>%d), become follower", srcID, srcTerm, node.Term)
-        if message.Type==pb.HeartbeatRequest || message.Type==pb.AppendEntriesRequest {
-            node.becomeFollower(message.Term, message.Src)
-        } else {
-            node.becomeFollower(message.Term, 0)
+        switch {
+        case message.Type == pb.RequestPreVoteRequest:
+        case message.Type==pb.RequestPreVoteResponse && !message.Reject:
+        default:
+            node.INFO("receive message from node %d in HIGH term %d(>%d), become follower", srcID, srcTerm, node.Term)
+            if message.Type==pb.HeartbeatRequest || message.Type==pb.AppendEntriesRequest {
+                node.becomeFollower(message.Term, message.Src)
+            } else {
+                node.becomeFollower(message.Term, 0)
+            }
+        }
+    }
+
+    if srcTerm < node.Term {
+        switch {
+        case message.Type == pb.RequestPreVoteRequest:
         }
     }
     node.DEBUG("process message from node %d, type %v", message.Src, messageType)
 
     switch messageType {
         case pb.StartCampaign:
-            node.campaign()
+            if preVote {
+                node.campaign(PreVoteCampaign)
+            } else {
+                node.campaign(VoteCampaign)
+            }
 
-        case pb.RequestVoteRequest:
+        case pb.RequestVoteRequest, pb.RequestPreVoteRequest:
             node.processVoteRequest(message)
 
         default:

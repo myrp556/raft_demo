@@ -20,7 +20,7 @@ func newTestNode(numNode int) *Node {
     for i:=0; i<numNode; i++ {
         peers = append(peers, Peer{ID: uint64(i+1)})
     }
-    node, _ := CreateNode(1, peers)
+    node := CreateNode(1, NewMemoryStorage(), peers)
     //node.OpenLog = false
     //node.OpenDebug = false
     return node
@@ -46,7 +46,7 @@ func TestNodeTick() bool {
 
 func TestNodeCampaign() bool {
     node := newTestNode(3)
-    node.campaign()
+    node.campaign(VoteCampaign)
 
     if node.voteTo != node.ID {
         ERROR("not vote to self")
@@ -154,48 +154,48 @@ func TestAppendEntry() bool {
     node := newTestNode(3)
     node.becomeLeader()
     node.Term = 3
-    node.logManager.cacheEntries = []pb.Entry{{Index: 1, Term: 1}, {Index: 2, Term: 2}}
+    node.logManager.cache.entries = []pb.Entry{{Index: 1, Term: 1}, {Index: 2, Term: 2}}
     node.nodeProgress[1].NextIndex = 3
     node.nodeProgress[1].MarchIndex = 2
 
     entries := []pb.Entry{{Index: 2, Term: 2}, {Index: 3, Term: 3}}
     node.logManager.appendEntriesToCache(entries)
-    if len(node.logManager.cacheEntries)!=3 {
-        ERROR("append entries to cache error, len=%d", len(node.logManager.cacheEntries))
+    if len(node.logManager.cache.entries)!=3 {
+        ERROR("append entries to cache error, len=%d", len(node.logManager.cache.entries))
         return false
     }
-    if node.logManager.cacheEntries[0].Index!=1 || node.logManager.cacheEntries[1].Index!=2 || node.logManager.cacheEntries[2].Index!=3 {
-        ERROR("append entries to cache error, index=%s", getEntriesIndexStr(node.logManager.cacheEntries))
+    if node.logManager.cache.entries[0].Index!=1 || node.logManager.cache.entries[1].Index!=2 || node.logManager.cache.entries[2].Index!=3 {
+        ERROR("append entries to cache error, index=%s", getEntriesIndexStr(node.logManager.cache.entries))
         return false
     }
 
     entries1 := []pb.Entry{{Index: 3, Term: 3}, {Index: 4, Term: 4}}
     node.logManager.appendEntries(2, 2, 0, entries1...)
-    if len(node.logManager.cacheEntries)!=4 {
-        ERROR("append entries error, len=%d, %s", len(node.logManager.cacheEntries), getEntriesIndexStr(node.logManager.cacheEntries))
+    if len(node.logManager.cache.entries)!=4 {
+        ERROR("append entries error, len=%d, %s", len(node.logManager.cache.entries), getEntriesIndexStr(node.logManager.cache.entries))
         return false
     }
 
     entries2 := []pb.Entry{{Index: 6, Term: 6}}
     node.logManager.appendEntries(5, 5, 0, entries2...)
-    if len(node.logManager.cacheEntries)!=4 {
-        ERROR("append no-exist entries error, len=%d, %s", len(node.logManager.cacheEntries), getEntriesIndexStr(node.logManager.cacheEntries))
+    if len(node.logManager.cache.entries)!=4 {
+        ERROR("append no-exist entries error, len=%d, %s", len(node.logManager.cache.entries), getEntriesIndexStr(node.logManager.cache.entries))
         return false
     }
 
-    node.logManager.offset = 2
-    node.logManager.cacheEntries = node.logManager.cacheEntries[1:]
+    node.logManager.cache.offset = 2
+    node.logManager.cache.entries = node.logManager.cache.entries[1:]
     entries3 := []pb.Entry{{Index: 1, Term: 1}, {Index: 2, Term: 2}}
     node.logManager.appendEntriesToCache(entries3)
-    if len(node.logManager.cacheEntries)!=2 {
-        ERROR("append offset cache entries error, len=%d, %s", len(node.logManager.cacheEntries), getEntriesIndexStr(node.logManager.cacheEntries))
+    if len(node.logManager.cache.entries)!=2 {
+        ERROR("append offset cache entries error, len=%d, %s", len(node.logManager.cache.entries), getEntriesIndexStr(node.logManager.cache.entries))
         return false
     }
 
     entries4 := []pb.Entry{{Index: 2, Term: 3}}
     node.logManager.appendEntriesToCache(entries4)
-    if node.logManager.cacheEntries[1].Term!=3 {
-        ERROR("append truncate cache entries error, len=%d, %s", len(node.logManager.cacheEntries), getEntriesIndexStr(node.logManager.cacheEntries))
+    if node.logManager.cache.entries[1].Term!=3 {
+        ERROR("append truncate cache entries error, len=%d, %s", len(node.logManager.cache.entries), getEntriesIndexStr(node.logManager.cache.entries))
         return false
     }
 
@@ -209,7 +209,7 @@ func TestNodeProgress() bool {
     node.nodeProgress[1] = &Progress {NextIndex: 4, MarchIndex: 3, Live: true}
     node.nodeProgress[2] = &Progress {NextIndex: 2, MarchIndex: 1, Live: true}
     node.nodeProgress[3] = &Progress {NextIndex: 3, MarchIndex: 2, Live: true}
-    node.logManager.cacheEntries = []pb.Entry{{Index: 1, Term: 1}, {Index: 2, Term: 1}, {Index: 3, Term: 1}}
+    node.logManager.cache.entries = []pb.Entry{{Index: 1, Term: 1}, {Index: 2, Term: 1}, {Index: 3, Term: 1}}
     node.logManager.committed = 1
 
     message1 := pb.Message{Src: 2, Dst: 1, Type: pb.AppendEntriesResponse, Term: 2, Reject: false, Index: 2}
@@ -246,12 +246,12 @@ func TestNodeAppendReceive() bool {
     node.nodeProgress[1] = &Progress {NextIndex: 2, MarchIndex: 1, Live: true}
     node.nodeProgress[2] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
     node.nodeProgress[3] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
-    node.logManager.cacheEntries = []pb.Entry {{Index: 1, Term: 1}}
+    node.logManager.cache.entries = []pb.Entry {{Index: 1, Term: 1}}
 
     message := pb.Message{Src: 2, Dst: 1, Type: pb.AppendEntriesRequest, Index: 1, LogTerm: 1, Term: 1, Entries: []pb.Entry{{Index: 2, Term: 1}}, Commit: 1}
     node.processMessage(message)
-    if len(node.logManager.cacheEntries) != 2 {
-        ERROR("receive append entry error: %s", getEntriesIndexStr(node.logManager.cacheEntries))
+    if len(node.logManager.cache.entries) != 2 {
+        ERROR("receive append entry error: %s", getEntriesIndexStr(node.logManager.cache.entries))
         return false
     }
     if node.logManager.committed != 1 {
@@ -268,7 +268,7 @@ func TestAppendReceiveReject() bool {
     node.nodeProgress[1] = &Progress {NextIndex: 2, MarchIndex: 1, Live: true}
     node.nodeProgress[2] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
     node.nodeProgress[3] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
-    node.logManager.cacheEntries = []pb.Entry {{Index: 1, Term: 1}}
+    node.logManager.cache.entries = []pb.Entry {{Index: 1, Term: 1}}
     node.Term = 2
     node.logManager.committed = 1
 
@@ -298,7 +298,7 @@ func TestNodeAppendReject() bool {
     node.nodeProgress[1] = &Progress {NextIndex: 3, MarchIndex: 2, Live: true}
     node.nodeProgress[2] = &Progress {NextIndex: 2, MarchIndex: 1, Live: true}
     node.nodeProgress[3] = &Progress {NextIndex: 1, MarchIndex: 0, Live: true}
-    node.logManager.cacheEntries = []pb.Entry {{Index: 1, Term: 1}, {Index: 2, Term: 1}}
+    node.logManager.cache.entries = []pb.Entry {{Index: 1, Term: 1}, {Index: 2, Term: 1}}
 
     message := pb.Message{Src: 2, Dst: 1, Type: pb.AppendEntriesResponse, Term: 1, Index: 1, Reject: true, RejectHint: 2}
     node.processMessage(message)

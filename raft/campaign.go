@@ -5,13 +5,35 @@ import (
     "github.com/myrp556/raft_demo/raft/pb"
 )
 
-func (node *Node) campaign() {
+type CampaignType string
+const (
+    VoteCampaign    CampaignType = "VoteCampaign"
+    PreVoteCampaign CampaignType = "PreVoteCampaign"
+)
+
+func (node *Node) campaign(campaignType CampaignType) {
+    if !node.OpenElection {
+        node.DEBUG("node dose not open election")
+        return
+    }
+
     if node.Type == Leader {
         node.INFO("already been a leader, no campaign start")
         return
     }
+
     // be condidate
-    node.becomeCandidate()
+    messageType := pb.RequestVoteRequest
+    term := node.Term
+    if preVote && campaignType==PreVoteCampaign {
+        node.becomePreCandidate()
+        messageType = pb.RequestPreVoteRequest
+        term = node.Term+1
+    } else {
+        node.becomeCandidate()
+        term = node.Term
+    }
+
     // vote self
     node.voteTo = node.ID
     if node.receiveVote(node.ID, true) {
@@ -27,36 +49,45 @@ func (node *Node) campaign() {
         message := pb.Message {
             Src: node.ID,
             Dst: ID,
-            Type: pb.RequestVoteRequest,
-            Term: node.Term,
+            Type: messageType,
+            Term: term,
             Index: node.logManager.lastIndex(),
             LogTerm: node.logManager.lastTerm(),
         }
+
         node.sendMessage(message)
     }
 }
 
 func (node *Node) processVoteRequest(message pb.Message) {
     srcID := message.Src
+    responseType := pb.RequestVoteResponse
+    if message.Type == pb.RequestPreVoteRequest {
+        responseType = pb.RequestPreVoteResponse
+    }
 
     if message.Term < node.Term {
-        response := pb.Message{Src: node.ID, Dst: srcID, Type: pb.RequestVoteResponse, Term: message.Term, Reject: true, RejectType: pb.RejectPastTerm}
+        response := pb.Message{Src: node.ID, Dst: srcID, Type: responseType, Term: message.Term, Reject: true, RejectType: pb.RejectPastTerm}
         node.sendMessage(response)
         return
     }
 
-    if message.Term == node.Term && node.Leader!=0 && node.Leader!=srcID {
-        response := pb.Message{Src: node.ID, Dst: srcID, Type: pb.RequestVoteResponse, Term: message.Term, Reject: true, RejectType: pb.RejectHasLeader}
+    if message.Term==node.Term && node.Leader!=0 && node.Leader!=srcID && message.Type==pb.RequestVoteRequest {
+        response := pb.Message{Src: node.ID, Dst: srcID, Type: responseType, Term: message.Term, Reject: true, RejectType: pb.RejectHasLeader}
         node.sendMessage(response)
         return
     }
 
-    response := pb.Message{Src: node.ID, Dst: srcID, Type: pb.RequestVoteResponse, Term: message.Term, Reject: false}
-    if (node.voteTo==0 && node.Leader==0) || (node.voteTo==message.Src) {
+    response := pb.Message{Src: node.ID, Dst: srcID, Type: responseType, Term: message.Term, Reject: false}
+
+    if (node.voteTo==0 && node.Leader==0) || (node.voteTo==message.Src) ||
+        (message.Type==pb.RequestPreVoteRequest && message.Term>node.Term) {
         if ok, t:=node.logManager.isUpToDate(message.Index, message.LogTerm); ok {
-            node.INFO("vote to node %d", srcID)
-            node.electionElapse = 0
-            node.voteTo = srcID
+            node.INFO("vote to node %d for term %d", srcID, message.Term)
+            if message.Type == pb.RequestVoteRequest {
+                node.electionElapse = 0
+                node.voteTo = srcID
+            }
         } else {
             response.Reject = true
             if t == 1 {
@@ -68,14 +99,10 @@ func (node *Node) processVoteRequest(message pb.Message) {
         }
     } else {
         response.Reject = true
-        response.RejectType = pb.RejectHasLeader
-        if (node.Leader!=0) {
-            node.INFO("can not vote to node %d for has leader node %d", srcID, node.Leader)
-        } else {
-            response.RejectType = pb.RejectVoted
-            node.INFO("can not vote to node %d for voted to node %d", srcID, node.voteTo)
-        }
+        response.RejectType = pb.RejectVoted
+        node.INFO("can not vote to node %d for voted to node %d", srcID, node.voteTo)
     }
+
     node.sendMessage(response)
 }
 
@@ -83,7 +110,7 @@ func (node *Node) processVoteResponse(message pb.Message) {
     srcID := message.Src
     term := message.Term
 
-    if term != node.Term {
+    if term!=node.Term && message.Type!=pb.RequestPreVoteResponse {
         node.DEBUG("receive vote from node %d in different term %d, ignore", srcID, term)
         return
     }
@@ -114,8 +141,12 @@ func (node *Node) receiveVote(voterID uint64, voteChecked bool) bool {
 }
 
 func (node *Node) winElection() {
-    node.INFO("win election!")
-    node.becomeLeader()
-    // boardcast nodes 
-    node.boardcastAppendEntries()
+    if node.Type == Candidate {
+        node.INFO("win election!")
+        node.becomeLeader()
+        node.boardcastAppendEntries()
+    } else {
+        node.INFO("win pre vote!")
+        node.campaign(VoteCampaign)
+    }
 }
